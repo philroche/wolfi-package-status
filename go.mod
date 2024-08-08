@@ -1,4 +1,4 @@
-module wolfi-package-status
+module github.com/philroche/wolfi-package-status
 
 go 1.22
 
