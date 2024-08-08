@@ -73,17 +73,17 @@ func main() {
 		// write the response variable resp to a file in a temporary directory
 		defer resp.Body.Close()
 		// Create a temporary directory
-		dir, err := os.MkdirTemp("", "wolfi-package-status")
+		temporaryAPKINDEXdir, err := os.MkdirTemp("", "wolfi-package-status")
 		if err != nil {
-			fmt.Printf("Failed to create temporary directory %s: %v\n", dir, err)
+			fmt.Printf("Failed to create temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
 			os.Exit(1)
 		}
 
 		// Create a file in the temporary directory
-		localAPKINDEXPath := filepath.Join(dir, "APKINDEX.tar.gz")
+		localAPKINDEXPath := filepath.Join(temporaryAPKINDEXdir, "APKINDEX.tar.gz")
 		localAPKINDEXfile, err := os.Create(localAPKINDEXPath)
 		if err != nil {
-			fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", dir, err)
+			fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
 			os.Exit(1)
 		}
 		defer localAPKINDEXfile.Close()
@@ -132,6 +132,12 @@ func main() {
 				fmt.Printf("%s version %s (%s - %s) in %s repository\n", _package.Name, _package.Version, humanize.Time(_package.BuildTime), _package.BuildTime, APKINDEXFriendlyName)
 			}
 
+		}
+		// delete the temporary directory
+		err = os.RemoveAll(temporaryAPKINDEXdir)
+		if err != nil {
+			fmt.Printf("Unable to delete temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+			os.Exit(1)
 		}
 	}
 	// we want to order the output by package name
