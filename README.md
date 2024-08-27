@@ -12,7 +12,7 @@ The repositories queried are:
 ## installation 
 
 ```bash
-go get github.com/philroche/wolfi-package-status
+go install github.com/philroche/wolfi-package-status@latest
 ```
 ## usage
 
