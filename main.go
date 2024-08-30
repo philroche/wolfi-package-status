@@ -38,6 +38,7 @@ func matchRegex(s string, pattern string) bool {
 func main() {
 	// Parse the command line arguments
 	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
+	listAllVersions := flag.Bool("all-versions", false, "List all matching package versions - not only the latest")
 	helpText := flag.Bool("help", false, "Display usage information")
 	flag.Parse()
 
@@ -45,6 +46,7 @@ func main() {
 		fmt.Printf("Usage: %s [options] [package names]\n", os.Args[0])
 		fmt.Println("\t* Mulitple package names can be specified separated by space")
 		fmt.Println("\t* Option `--regex` can be used to match package names on specified regular expression. Multiple regular expressions can be specified separated by space")
+		fmt.Println("\t* Option `--all-versions` can be used to list all package versions, not only the latest.")
 		fmt.Println("\t* Option `--help` can be used to display this usage message")
 		os.Exit(0)
 	}
@@ -55,12 +57,12 @@ func main() {
 			packageNames = append(packageNames, args[i])
 		}
 	}
-
 	var APKINDEXURLs = make(map[string]string)
 	APKINDEXURLs["wolfi os"] = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
 	APKINDEXURLs["enterprise packages"] = "https://packages.cgr.dev/os/x86_64/APKINDEX.tar.gz"
 	APKINDEXURLs["extra packages"] = "https://packages.cgr.dev/extras/x86_64/APKINDEX.tar.gz"
 
+	var matchingPackagesAllVersions = make(map[string][]map[string]interface{})
 	var matchingPackagesLatestVersion = make(map[string]map[string]interface{})
 	//for each of the APKINDEXURLs create an instance of the repository class
 	for APKINDEXFriendlyName, APKINDEXurl := range APKINDEXURLs {
@@ -107,24 +109,31 @@ func main() {
 					if *matchAsRegex && isValidRegex(packageName) && matchRegex(_package.Name, packageName) {
 						matchFound = true
 					}
-					//if strings.Contains(packageName, "*") && strings.Contains(_package.Name, strings.ReplaceAll(packageName, "*", "")) {
-					//	matchFound = true
-					//}
+
 					if matchFound {
 						// if this is the first time we have encountered this package - ensure the inner map is initialized
-						innerMap := matchingPackagesLatestVersion[_package.Name]
-						if innerMap == nil {
-							innerMap = make(map[string]interface{})
-							matchingPackagesLatestVersion[_package.Name] = innerMap
+						matchingPackagesLatestVersionInnerMap := matchingPackagesLatestVersion[_package.Name]
+						if matchingPackagesLatestVersionInnerMap == nil {
+							matchingPackagesLatestVersionInnerMap = make(map[string]interface{})
+							matchingPackagesLatestVersion[_package.Name] = matchingPackagesLatestVersionInnerMap
 						}
+
+						// if this is the first time we have encountered this package - ensure the inner map is initialized
+						matchingPackagesAllVersionsInnerMap := matchingPackagesAllVersions[_package.Name]
+						if matchingPackagesAllVersionsInnerMap == nil {
+							matchingPackagesAllVersionsInnerMap = []map[string]interface{}{}
+							matchingPackagesAllVersions[_package.Name] = matchingPackagesAllVersionsInnerMap
+						}
+						// add the package to the list of all versions
+						matchingPackagesAllVersions[_package.Name] = append(matchingPackagesAllVersions[_package.Name], map[string]interface{}{"Version": _package.Version, "BuildTime": _package.BuildTime, "Repository": APKINDEXFriendlyName})
+
+						// Now check to see if this is the latest version
 						latestVersion, latestVersionFound := matchingPackagesLatestVersion[_package.Name]["Version"].(string)
 						if !latestVersionFound || latestVersion == "" || _package.Version > latestVersion {
 							matchingPackagesLatestVersion[_package.Name]["Version"] = _package.Version
 							matchingPackagesLatestVersion[_package.Name]["BuildTime"] = _package.BuildTime
 							matchingPackagesLatestVersion[_package.Name]["Repository"] = APKINDEXFriendlyName
 						}
-						//matchingPackageLatestVersion[_package.Name] = append(matchingPackageVersions[_package.Name], _package.Version)
-						//fmt.Println(_package.Name, _package.Version)
 					}
 				}
 			} else {
@@ -140,15 +149,32 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	// we want to order the output by package name
-	packageNameKeys := make([]string, 0, len(matchingPackagesLatestVersion))
-	for k := range matchingPackagesLatestVersion {
-		packageNameKeys = append(packageNameKeys, k)
-	}
-	// Sort the keys.
-	sort.Strings(packageNameKeys)
-	for _, matchingPackageLatestVersionPackageName := range packageNameKeys {
-		matchingPackageMap := matchingPackagesLatestVersion[matchingPackageLatestVersionPackageName]
-		fmt.Printf("The latest version of package %s is %s (%s - %s) in %s repository\n", matchingPackageLatestVersionPackageName, matchingPackageMap["Version"].(string), humanize.Time(matchingPackageMap["BuildTime"].(time.Time)), matchingPackageMap["BuildTime"].(time.Time), matchingPackageMap["Repository"].(string))
+	if *listAllVersions {
+		// we want to order the output by package name
+		packageNameKeys := make([]string, 0, len(matchingPackagesAllVersions))
+		for k := range matchingPackagesAllVersions {
+			packageNameKeys = append(packageNameKeys, k)
+		}
+		// Sort the keys.
+		sort.Strings(packageNameKeys)
+		for _, matchingPackageAllVersionsPackageName := range packageNameKeys {
+			matchingPackageMap := matchingPackagesAllVersions[matchingPackageAllVersionsPackageName]
+			fmt.Printf("The versions of package %s are:\n", matchingPackageAllVersionsPackageName)
+			for _, versionMap := range matchingPackageMap {
+				fmt.Printf("%s (%s - %s) in %s repository\n", versionMap["Version"].(string), humanize.Time(versionMap["BuildTime"].(time.Time)), versionMap["BuildTime"].(time.Time), versionMap["Repository"].(string))
+			}
+		}
+	} else {
+		// we want to order the output by package name
+		packageNameKeys := make([]string, 0, len(matchingPackagesLatestVersion))
+		for k := range matchingPackagesLatestVersion {
+			packageNameKeys = append(packageNameKeys, k)
+		}
+		// Sort the keys.
+		sort.Strings(packageNameKeys)
+		for _, matchingPackageLatestVersionPackageName := range packageNameKeys {
+			matchingPackageMap := matchingPackagesLatestVersion[matchingPackageLatestVersionPackageName]
+			fmt.Printf("The latest version of package %s is %s (%s - %s) in %s repository\n", matchingPackageLatestVersionPackageName, matchingPackageMap["Version"].(string), humanize.Time(matchingPackageMap["BuildTime"].(time.Time)), matchingPackageMap["BuildTime"].(time.Time), matchingPackageMap["Repository"].(string))
+		}
 	}
 }
