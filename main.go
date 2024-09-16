@@ -39,6 +39,7 @@ func main() {
 	// Parse the command line arguments
 	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
 	listAllVersions := flag.Bool("all-versions", false, "List all matching package versions - not only the latest")
+	localAPKINDEX := flag.String("local-apkindex", "", "Path to a local APKINDEX file")
 	helpText := flag.Bool("help", false, "Display usage information")
 	flag.Parse()
 
@@ -47,6 +48,7 @@ func main() {
 		fmt.Println("\t* Mulitple package names can be specified separated by space")
 		fmt.Println("\t* Option `--regex` can be used to match package names on specified regular expression. Multiple regular expressions can be specified separated by space")
 		fmt.Println("\t* Option `--all-versions` can be used to list all package versions, not only the latest.")
+		fmt.Println("\t* Option `--local-apkindex` can be used to specify a local APKINDEX.tar.gz file to use instead of querying remote repositories.")
 		fmt.Println("\t* Option `--help` can be used to display this usage message")
 		os.Exit(0)
 	}
@@ -58,40 +60,53 @@ func main() {
 		}
 	}
 	var APKINDEXURLs = make(map[string]string)
-	APKINDEXURLs["wolfi os"] = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
-	APKINDEXURLs["enterprise packages"] = "https://packages.cgr.dev/os/x86_64/APKINDEX.tar.gz"
-	APKINDEXURLs["extra packages"] = "https://packages.cgr.dev/extras/x86_64/APKINDEX.tar.gz"
+
+	if *localAPKINDEX != "" {
+		APKINDEXURLs["local apkindex"] = *localAPKINDEX
+	} else {
+		APKINDEXURLs["wolfi os"] = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
+		APKINDEXURLs["enterprise packages"] = "https://packages.cgr.dev/os/x86_64/APKINDEX.tar.gz"
+		APKINDEXURLs["extra packages"] = "https://packages.cgr.dev/extras/x86_64/APKINDEX.tar.gz"
+	}
 
 	var matchingPackagesAllVersions = make(map[string][]map[string]interface{})
 	var matchingPackagesLatestVersion = make(map[string]map[string]interface{})
 	//for each of the APKINDEXURLs create an instance of the repository class
 	for APKINDEXFriendlyName, APKINDEXurl := range APKINDEXURLs {
-		// Download each of the APKINDEX files to temporary directory using "net/http"
-		resp, err := http.Get(APKINDEXurl)
-		if err != nil {
-			fmt.Printf("Failed to download APKINDEX file %s: %v\n", APKINDEXurl, err)
-			os.Exit(1)
-		}
-		// write the response variable resp to a file in a temporary directory
-		defer resp.Body.Close()
-		// Create a temporary directory
-		temporaryAPKINDEXdir, err := os.MkdirTemp("", "wolfi-package-status")
-		if err != nil {
-			fmt.Printf("Failed to create temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-			os.Exit(1)
+		// check to see of APKINDEXurl is a local file
+		localAPKINDEXPath := ""
+		temporaryAPKINDEXdir := ""
+		if _, err := os.Stat(APKINDEXurl); err == nil {
+			localAPKINDEXPath = APKINDEXurl
+		} else {
+			// Download each of the APKINDEX files to temporary directory using "net/http"
+			resp, err := http.Get(APKINDEXurl)
+			if err != nil {
+				fmt.Printf("Failed to download APKINDEX file %s: %v\n", APKINDEXurl, err)
+				os.Exit(1)
+			}
+			// write the response variable resp to a file in a temporary directory
+			defer resp.Body.Close()
+			// Create a temporary directory
+			temporaryAPKINDEXdir, err = os.MkdirTemp("", "wolfi-package-status")
+			if err != nil {
+				fmt.Printf("Failed to create temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+				os.Exit(1)
+			}
+
+			// Create a file in the temporary directory
+			localAPKINDEXPath = filepath.Join(temporaryAPKINDEXdir, "APKINDEX.tar.gz")
+			localAPKINDEXfile, err := os.Create(localAPKINDEXPath)
+			if err != nil {
+				fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+				os.Exit(1)
+			}
+			defer localAPKINDEXfile.Close()
+
+			// Write the response to file
+			_, err = io.Copy(localAPKINDEXfile, resp.Body)
 		}
 
-		// Create a file in the temporary directory
-		localAPKINDEXPath := filepath.Join(temporaryAPKINDEXdir, "APKINDEX.tar.gz")
-		localAPKINDEXfile, err := os.Create(localAPKINDEXPath)
-		if err != nil {
-			fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-			os.Exit(1)
-		}
-		defer localAPKINDEXfile.Close()
-
-		// Write the response to file
-		_, err = io.Copy(localAPKINDEXfile, resp.Body)
 		// fmt.Println(localAPKINDEXPath)
 		indexFile, err := os.Open(localAPKINDEXPath)
 		apkIndex, err := repository.IndexFromArchive(indexFile)
@@ -142,11 +157,15 @@ func main() {
 			}
 
 		}
-		// delete the temporary directory
-		err = os.RemoveAll(temporaryAPKINDEXdir)
-		if err != nil {
-			fmt.Printf("Unable to delete temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-			os.Exit(1)
+
+		// if it is not a local file, delete the temporary directory
+		if localAPKINDEXPath != APKINDEXurl {
+			// delete the temporary directory
+			err = os.RemoveAll(temporaryAPKINDEXdir)
+			if err != nil {
+				fmt.Printf("Unable to delete temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+				os.Exit(1)
+			}
 		}
 	}
 	if *listAllVersions {
