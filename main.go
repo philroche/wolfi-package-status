@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dustin/go-humanize"
+	"github.com/knqyf263/go-apk-version"
 	"gitlab.alpinelinux.org/alpine/go/repository"
 	"io"
 	"log"
@@ -144,7 +145,9 @@ func main() {
 
 						// Now check to see if this is the latest version
 						latestVersion, latestVersionFound := matchingPackagesLatestVersion[_package.Name]["Version"].(string)
-						if !latestVersionFound || latestVersion == "" || _package.Version > latestVersion {
+						semver_latestVersion, _ := version.NewVersion(latestVersion)
+						semver_packageVersion, _ := version.NewVersion(_package.Version)
+						if !latestVersionFound || latestVersion == "" || semver_packageVersion.GreaterThan(semver_latestVersion) {
 							matchingPackagesLatestVersion[_package.Name]["Version"] = _package.Version
 							matchingPackagesLatestVersion[_package.Name]["BuildTime"] = _package.BuildTime
 							matchingPackagesLatestVersion[_package.Name]["Repository"] = APKINDEXFriendlyName
