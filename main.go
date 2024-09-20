@@ -8,6 +8,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"github.com/dustin/go-humanize"
@@ -36,19 +37,34 @@ func matchRegex(s string, pattern string) bool {
 	return regex.MatchString(s)
 }
 
+// getEnvOrFlag returns the value of the environment variable if it is set, otherwise returns the command-line flag value.
+func getEnvOrFlag(envName string, flagValue *string) string {
+	if value, exists := os.LookupEnv(envName); exists {
+		return value
+	}
+	return *flagValue
+}
+
 func main() {
 	// Parse the command line arguments
 	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
 	listAllVersions := flag.Bool("all-versions", false, "List all matching package versions - not only the latest")
 	localAPKINDEX := flag.String("local-apkindex", "", "Path to a local APKINDEX file")
+	localAuthToken := flag.String("auth-token", "", "Specify auth token to use when querying non public wolfi package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
 	helpText := flag.Bool("help", false, "Display usage information")
 	flag.Parse()
-
+	httpBasicAuthPassword := getEnvOrFlag("HTTP_AUTH", localAuthToken)
+	// if the httpBasicAuthPassword is not set, then we need to prompt the user for it
+	if httpBasicAuthPassword == "" {
+		fmt.Print("Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
+		_, _ = fmt.Scanln(&httpBasicAuthPassword)
+	}
 	if *helpText {
 		fmt.Printf("Usage: %s [options] [package names]\n", os.Args[0])
 		fmt.Println("\t* Mulitple package names can be specified separated by space")
 		fmt.Println("\t* Option `--regex` can be used to match package names on specified regular expression. Multiple regular expressions can be specified separated by space")
 		fmt.Println("\t* Option `--all-versions` can be used to list all package versions, not only the latest.")
+		fmt.Println("\t* Option `--auth-token` specify auth token to use when querying wolfi non public package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
 		fmt.Println("\t* Option `--local-apkindex` can be used to specify a local APKINDEX.tar.gz file to use instead of querying remote repositories.")
 		fmt.Println("\t* Option `--help` can be used to display this usage message")
 		os.Exit(0)
@@ -66,8 +82,8 @@ func main() {
 		APKINDEXURLs["local apkindex"] = *localAPKINDEX
 	} else {
 		APKINDEXURLs["wolfi os"] = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
-		APKINDEXURLs["enterprise packages"] = "https://packages.cgr.dev/os/x86_64/APKINDEX.tar.gz"
-		APKINDEXURLs["extra packages"] = "https://packages.cgr.dev/extras/x86_64/APKINDEX.tar.gz"
+		APKINDEXURLs["enterprise packages"] = "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz"
+		APKINDEXURLs["extra packages"] = "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz"
 	}
 
 	var matchingPackagesAllVersions = make(map[string][]map[string]interface{})
@@ -81,11 +97,32 @@ func main() {
 			localAPKINDEXPath = APKINDEXurl
 		} else {
 			// Download each of the APKINDEX files to temporary directory using "net/http"
-			resp, err := http.Get(APKINDEXurl)
+
+			// use localAuthToken if it is set when making request to non public repositories
+			// Create a new request
+			req, err := http.NewRequest("GET", APKINDEXurl, nil)
+			if err != nil {
+				fmt.Println("Error creating request:", err)
+				return
+			}
+
+			// Add the auth token to the request header but only for non public repositories
+			if httpBasicAuthPassword != "" && APKINDEXFriendlyName != "wolfi os" {
+				encodedAuth := base64.StdEncoding.EncodeToString([]byte("user:" + httpBasicAuthPassword))
+				req.Header.Set("Authorization", "Basic "+encodedAuth)
+			}
+
+			req.Header.Set("Accept", "application/gzip")
+			req.Header.Add("User-Agent", "curl/7.68.0")
+
+			// Send the request via a client
+			client := &http.Client{}
+			resp, err := client.Do(req)
 			if err != nil {
 				fmt.Printf("Failed to download APKINDEX file %s: %v\n", APKINDEXurl, err)
 				os.Exit(1)
 			}
+
 			// write the response variable resp to a file in a temporary directory
 			defer resp.Body.Close()
 			// Create a temporary directory
