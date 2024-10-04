@@ -45,6 +45,24 @@ func getEnvOrFlag(envName string, flagValue *string) string {
 	return *flagValue
 }
 
+func removeDuplicates(stringsList []string) []string {
+	// Create a map to track seen elements
+	seen := make(map[string]struct{})
+	// Create a new slice to store the result
+	var result []string
+
+	// Iterate over the original slice
+	for _, item := range stringsList {
+		// If the item is not in the map, add it
+		if _, found := seen[item]; !found {
+			seen[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
 func main() {
 	// Parse the command line arguments
 	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
@@ -52,6 +70,7 @@ func main() {
 	localAPKINDEX := flag.String("local-apkindex", "", "Path to a local APKINDEX file")
 	localAuthToken := flag.String("auth-token", "", "Specify auth token to use when querying non public wolfi package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
 	showParentPackageInformation := flag.Bool("show-parent-package", false, "This might be a sub package of a parent package, show the parent package information")
+	showSubPackageInformation := flag.Bool("show-sub-packages", false, "Show the sub package information. This will only take effect when a non regex package name filter is used.")
 	helpText := flag.Bool("help", false, "Display usage information")
 	flag.Parse()
 	httpBasicAuthPassword := getEnvOrFlag("HTTP_AUTH", localAuthToken)
@@ -67,6 +86,7 @@ func main() {
 		fmt.Println("\t* Option `--all-versions` can be used to list all package versions, not only the latest.")
 		fmt.Println("\t* Option `--auth-token` specify auth token to use when querying wolfi non public package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
 		fmt.Println("\t* Option `--show-parent-package` can be used to show the parent package information as the package being queried might be defined as a sub package.")
+		fmt.Println("\t* Option `--show-sub-packages` can be used to show the sub package information as the package being queried might be defined as a parent/origin package. This will only take effect when a non regex package name filter is used.")
 		fmt.Println("\t* Option `--local-apkindex` can be used to specify a local APKINDEX.tar.gz file to use instead of querying remote repositories.")
 		fmt.Println("\t* Option `--help` can be used to display this usage message")
 		os.Exit(0)
@@ -90,7 +110,7 @@ func main() {
 
 	var matchingPackagesAllVersions = make(map[string][]map[string]interface{})
 	var matchingPackagesLatestVersion = make(map[string]map[string]interface{})
-
+	var subPackageNames []string
 	//for each of the APKINDEXURLs create an instance of the repository class
 	for APKINDEXFriendlyName, APKINDEXurl := range APKINDEXURLs {
 		// check to see of APKINDEXurl is a local file
@@ -180,7 +200,15 @@ func main() {
 							matchingPackagesAllVersions[_package.Name] = matchingPackagesAllVersionsInnerMap
 						}
 						// add the package to the list of all versions
-						matchingPackagesAllVersions[_package.Name] = append(matchingPackagesAllVersions[_package.Name], map[string]interface{}{"Version": _package.Version, "BuildTime": _package.BuildTime, "Repository": APKINDEXFriendlyName, "Origin": _package.Origin})
+						matchingPackagesAllVersions[_package.Name] = append(
+							matchingPackagesAllVersions[_package.Name],
+							map[string]interface{}{
+								"Version":    _package.Version,
+								"BuildTime":  _package.BuildTime,
+								"Repository": APKINDEXFriendlyName,
+								"Origin":     _package.Origin,
+							},
+						)
 
 						// Now check to see if this is the latest version
 						latestVersion, latestVersionFound := matchingPackagesLatestVersion[_package.Name]["Version"].(string)
@@ -191,6 +219,13 @@ func main() {
 							matchingPackagesLatestVersion[_package.Name]["BuildTime"] = _package.BuildTime
 							matchingPackagesLatestVersion[_package.Name]["Repository"] = APKINDEXFriendlyName
 							matchingPackagesLatestVersion[_package.Name]["Origin"] = _package.Origin
+						}
+					} else {
+						if *showSubPackageInformation && !*matchAsRegex {
+							//is there an origin of this package and if so does it match the package name filter
+							if _package.Origin != "" && _package.Origin == packageName {
+								subPackageNames = append(subPackageNames, _package.Name)
+							}
 						}
 					}
 				}
@@ -215,6 +250,9 @@ func main() {
 			}
 		}
 	}
+	// ensure if subPackageNames is not empty that we remove any duplicates
+	subPackageNames = removeDuplicates(subPackageNames)
+
 	if *listAllVersions {
 		// we want to order the output by package name
 		packageNameKeys := make([]string, 0, len(matchingPackagesAllVersions))
@@ -234,6 +272,7 @@ func main() {
 				fmt.Printf("%s (%s - %s) in %s repository%s\n", versionMap["Version"].(string), humanize.Time(versionMap["BuildTime"].(time.Time)), versionMap["BuildTime"].(time.Time), versionMap["Repository"].(string), _parentPackageInformation)
 			}
 		}
+
 	} else {
 		// we want to order the output by package name
 		packageNameKeys := make([]string, 0, len(matchingPackagesLatestVersion))
@@ -249,6 +288,13 @@ func main() {
 				_parentPackageInformation = " - Parent/Origin package: " + matchingPackageMap["Origin"].(string)
 			}
 			fmt.Printf("The latest version of package %s is %s (%s - %s) in %s repository%s\n", matchingPackageLatestVersionPackageName, matchingPackageMap["Version"].(string), humanize.Time(matchingPackageMap["BuildTime"].(time.Time)), matchingPackageMap["BuildTime"].(time.Time), matchingPackageMap["Repository"].(string), _parentPackageInformation)
+		}
+
+	}
+	if *showSubPackageInformation && !*matchAsRegex && len(subPackageNames) > 0 {
+		fmt.Println("Sub packages:")
+		for _, subPackageName := range subPackageNames {
+			fmt.Println(subPackageName)
 		}
 	}
 }
