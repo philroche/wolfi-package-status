@@ -264,6 +264,10 @@ func main() {
 		for _, matchingPackageAllVersionsPackageName := range packageNameKeys {
 			matchingPackageMap := matchingPackagesAllVersions[matchingPackageAllVersionsPackageName]
 			fmt.Printf("The versions of package %s are:\n", matchingPackageAllVersionsPackageName)
+			// Sort the version maps by Version in ascending order
+			sort.Slice(matchingPackageMap, func(i, j int) bool {
+				return matchingPackageMap[i]["Version"].(string) < matchingPackageMap[j]["Version"].(string)
+			})
 			for _, versionMap := range matchingPackageMap {
 				_parentPackageInformation := ""
 				if *showParentPackageInformation {
