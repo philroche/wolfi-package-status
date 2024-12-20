@@ -258,7 +258,9 @@ func main() {
 			for _, packageName := range packageNameKeys {
 				versions := matchingPackagesAllVersions[packageName]
 				sort.Slice(versions, func(i, j int) bool {
-					return versions[i]["Version"].(string) < versions[j]["Version"].(string)
+					compare_version_i, _ := version.NewVersion(versions[i]["Version"].(string))
+					compare_version_j, _ := version.NewVersion(versions[j]["Version"].(string))
+					return compare_version_j.GreaterThan(compare_version_i)
 				})
 				sortedMatchingPackagesAllVersions[packageName] = versions
 			}
@@ -287,7 +289,9 @@ func main() {
 				matchingPackageMap := matchingPackagesAllVersions[matchingPackageAllVersionsPackageName]
 				fmt.Printf("The versions of package %s are:\n", matchingPackageAllVersionsPackageName)
 				sort.Slice(matchingPackageMap, func(i, j int) bool {
-					return matchingPackageMap[i]["Version"].(string) < matchingPackageMap[j]["Version"].(string)
+					compare_version_i, _ := version.NewVersion(matchingPackageMap[i]["Version"].(string))
+					compare_version_j, _ := version.NewVersion(matchingPackageMap[j]["Version"].(string))
+					return compare_version_j.GreaterThan(compare_version_i)
 				})
 				for _, versionMap := range matchingPackageMap {
 					_parentPackageInformation := ""
