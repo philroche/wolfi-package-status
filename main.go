@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -59,6 +60,24 @@ func removeDuplicates(stringsList []string) []string {
 	return result
 }
 
+// Version represents a single version entry in the JSON
+type Version struct {
+	BuildTime  time.Time `json:"BuildTime"`
+	Origin     string    `json:"Origin"`
+	Repository string    `json:"Repository"`
+	Version    string    `json:"Version"`
+}
+
+// PackageInfo represents the overall structure for a package
+type PackageInfo struct {
+	Versions    []Version `json:"versions"`
+	SubPackages []string  `json:"subpackages"`
+}
+
+// Result represents the top-level structure for handling multiple packages
+type Result map[string]PackageInfo
+type SubPackages map[string][]string
+
 func main() {
 	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
 	listAllVersions := flag.Bool("all-versions", false, "List all matching package versions - not only the latest")
@@ -87,13 +106,15 @@ func main() {
 		fmt.Println("\t* Option `--help` can be used to display this usage message")
 		os.Exit(0)
 	}
-	packageNames := []string{}
-	args := os.Args
-	if len(args) > 1 {
-		for i := 1; i < len(args); i++ {
-			packageNames = append(packageNames, args[i])
+
+	queryStrings := []string{}
+	args := flag.Args()
+	if len(args) > 0 {
+		for _, arg := range args {
+			queryStrings = append(queryStrings, arg)
 		}
 	}
+
 	var APKINDEXURLs = make(map[string]string)
 
 	if *localAPKINDEX != "" {
@@ -104,222 +125,273 @@ func main() {
 		APKINDEXURLs["extra packages"] = "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz"
 	}
 
-	var matchingPackagesAllVersions = make(map[string][]map[string]interface{})
-	var matchingPackagesLatestVersion = make(map[string]map[string]interface{})
-	var subPackageNames []string
+	// Create the Result map
+	results := Result{}
+	subPackages := SubPackages{}
+
+	var wg sync.WaitGroup
+	var resultsMutex sync.Mutex
+	var subPackagesMutex sync.Mutex
+	resultsChan := make(chan Result)
+	subPackagesChan := make(chan SubPackages)
+	errorsChan := make(chan error)
+
+	var receiverWg sync.WaitGroup
+
+	// Goroutine to read from resultsChan
+	receiverWg.Add(1)
+	go func() {
+		defer receiverWg.Done()
+		for _resultsChan := range resultsChan {
+			for _packageName, _pkgInfo := range _resultsChan {
+				resultsMutex.Lock()
+				if _, exists := results[_packageName]; exists {
+					pkgInfoTemp := results[_packageName]
+					pkgInfoTemp.Versions = append(pkgInfoTemp.Versions, _pkgInfo.Versions...)
+					results[_packageName] = pkgInfoTemp
+				} else {
+					results[_packageName] = _pkgInfo
+				}
+				resultsMutex.Unlock()
+			}
+		}
+
+	}()
+
+	receiverWg.Add(1)
+	go func() {
+		defer receiverWg.Done()
+		for _subPackagesChan := range subPackagesChan {
+			for _packageName, _subPackages := range _subPackagesChan {
+				subPackagesMutex.Lock()
+				subPackages[_packageName] = append(subPackages[_packageName], _subPackages...)
+				subPackagesMutex.Unlock()
+			}
+		}
+
+	}()
+
+	receiverWg.Add(1)
+	go func() {
+		defer receiverWg.Done()
+		for _errorsChan := range errorsChan {
+			fmt.Println("Encountered errors:", _errorsChan)
+		}
+
+	}()
+
 	//for each of the APKINDEXURLs create an instance of the repository class
 	for APKINDEXFriendlyName, APKINDEXurl := range APKINDEXURLs {
-		// check to see of APKINDEXurl is a local file
-		localAPKINDEXPath := ""
-		temporaryAPKINDEXdir := ""
-		if _, err := os.Stat(APKINDEXurl); err == nil {
-			localAPKINDEXPath = APKINDEXurl
-		} else {
-			// Download each of the APKINDEX files to temporary directory using "net/http"
+		wg.Add(1)
+		go func(_friendlyName, _apkIndexURL string) {
+			defer wg.Done()
+			// check to see of APKINDEXurl is a local file
+			localAPKINDEXPath := ""
+			temporaryAPKINDEXdir := ""
+			if _, err := os.Stat(_apkIndexURL); err == nil {
+				localAPKINDEXPath = _apkIndexURL
+			} else {
+				// Download each of the APKINDEX files to temporary directory using "net/http"
 
-			// use localAuthToken if it is set when making request to non public repositories
-			// Create a new request
-			req, err := http.NewRequest("GET", APKINDEXurl, nil)
+				// use localAuthToken if it is set when making request to non public repositories
+				// Create a new request
+				req, err := http.NewRequest("GET", _apkIndexURL, nil)
+				if err != nil {
+					fmt.Println("Error creating request:", err)
+					return
+				}
+
+				// Add the auth token to the request header but only for non public repositories
+				if httpBasicAuthPassword != "" && _friendlyName != "wolfi os" {
+					encodedAuth := base64.StdEncoding.EncodeToString([]byte("user:" + httpBasicAuthPassword))
+					req.Header.Set("Authorization", "Basic "+encodedAuth)
+				}
+
+				req.Header.Set("Accept", "application/gzip")
+				req.Header.Add("User-Agent", "curl/7.68.0")
+
+				// Send the request via a client
+				client := &http.Client{}
+				resp, err := client.Do(req)
+				if err != nil {
+					fmt.Printf("Failed to download APKINDEX file %s: %v\n", _apkIndexURL, err)
+					os.Exit(1)
+				}
+
+				// write the response variable resp to a file in a temporary directory
+				defer resp.Body.Close()
+				// Create a temporary directory
+				temporaryAPKINDEXdir, err = os.MkdirTemp("", "wolfi-package-status")
+				if err != nil {
+					fmt.Printf("Failed to create temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+					os.Exit(1)
+				}
+
+				// Create a file in the temporary directory
+				localAPKINDEXPath = filepath.Join(temporaryAPKINDEXdir, "APKINDEX.tar.gz")
+				localAPKINDEXfile, err := os.Create(localAPKINDEXPath)
+				if err != nil {
+					fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+					os.Exit(1)
+				}
+				defer localAPKINDEXfile.Close()
+
+				// Write the response to file
+				_, err = io.Copy(localAPKINDEXfile, resp.Body)
+			}
+			indexFile, err := os.Open(localAPKINDEXPath)
 			if err != nil {
-				fmt.Println("Error creating request:", err)
+				errorsChan <- fmt.Errorf("failed to open APKINDEX file %s: %v", localAPKINDEXPath, err)
 				return
 			}
-
-			// Add the auth token to the request header but only for non public repositories
-			if httpBasicAuthPassword != "" && APKINDEXFriendlyName != "wolfi os" {
-				encodedAuth := base64.StdEncoding.EncodeToString([]byte("user:" + httpBasicAuthPassword))
-				req.Header.Set("Authorization", "Basic "+encodedAuth)
-			}
-
-			req.Header.Set("Accept", "application/gzip")
-			req.Header.Add("User-Agent", "curl/7.68.0")
-
-			// Send the request via a client
-			client := &http.Client{}
-			resp, err := client.Do(req)
+			defer indexFile.Close()
+			apkIndex, err := repository.IndexFromArchive(indexFile)
 			if err != nil {
-				fmt.Printf("Failed to download APKINDEX file %s: %v\n", APKINDEXurl, err)
-				os.Exit(1)
+				errorsChan <- fmt.Errorf("failed to read APKINDEX archive %s: %v", localAPKINDEXPath, err)
+				return
 			}
+			packages := apkIndex.Packages
+			localResults := Result{}
+			localSubPackages := SubPackages{}
 
-			// write the response variable resp to a file in a temporary directory
-			defer resp.Body.Close()
-			// Create a temporary directory
-			temporaryAPKINDEXdir, err = os.MkdirTemp("", "wolfi-package-status")
-			if err != nil {
-				fmt.Printf("Failed to create temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-				os.Exit(1)
-			}
+			for _, _package := range packages {
+				var matchFound bool
 
-			// Create a file in the temporary directory
-			localAPKINDEXPath = filepath.Join(temporaryAPKINDEXdir, "APKINDEX.tar.gz")
-			localAPKINDEXfile, err := os.Create(localAPKINDEXPath)
-			if err != nil {
-				fmt.Printf("Failed to write APKINDEX file to temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-				os.Exit(1)
-			}
-			defer localAPKINDEXfile.Close()
-
-			// Write the response to file
-			_, err = io.Copy(localAPKINDEXfile, resp.Body)
-		}
-
-		indexFile, err := os.Open(localAPKINDEXPath)
-		apkIndex, err := repository.IndexFromArchive(indexFile)
-		packages := apkIndex.Packages
-		for _, _package := range packages {
-			var matchFound bool
-			if len(packageNames) > 0 {
-				for _, packageName := range packageNames {
-					if packageName == _package.Name {
-						matchFound = true
-					}
-					if *matchAsRegex && isValidRegex(packageName) && matchRegex(_package.Name, packageName) {
-						matchFound = true
-					}
-
-					if matchFound {
-						// if this is the first time we have encountered this package - ensure the inner map is initialized
-						matchingPackagesLatestVersionInnerMap := matchingPackagesLatestVersion[_package.Name]
-						if matchingPackagesLatestVersionInnerMap == nil {
-							matchingPackagesLatestVersionInnerMap = make(map[string]interface{})
-							matchingPackagesLatestVersion[_package.Name] = matchingPackagesLatestVersionInnerMap
+				if len(queryStrings) > 0 {
+					for _, queryString := range queryStrings {
+						matchFound = false
+						if queryString == _package.Name {
+							matchFound = true
+						}
+						if *matchAsRegex && isValidRegex(queryString) && matchRegex(_package.Name, queryString) {
+							matchFound = true
 						}
 
-						// if this is the first time we have encountered this package - ensure the inner map is initialized
-						matchingPackagesAllVersionsInnerMap := matchingPackagesAllVersions[_package.Name]
-						if matchingPackagesAllVersionsInnerMap == nil {
-							matchingPackagesAllVersionsInnerMap = []map[string]interface{}{}
-							matchingPackagesAllVersions[_package.Name] = matchingPackagesAllVersionsInnerMap
-						}
-						// add the package to the list of all versions
-						matchingPackagesAllVersions[_package.Name] = append(
-							matchingPackagesAllVersions[_package.Name],
-							map[string]interface{}{
-								"Version":    _package.Version,
-								"BuildTime":  _package.BuildTime,
-								"Repository": APKINDEXFriendlyName,
-								"Origin":     _package.Origin,
-							},
-						)
-
-						// Now check to see if this is the latest version
-						latestVersion, latestVersionFound := matchingPackagesLatestVersion[_package.Name]["Version"].(string)
-						semver_latestVersion, _ := version.NewVersion(latestVersion)
-						semver_packageVersion, _ := version.NewVersion(_package.Version)
-						if !latestVersionFound || latestVersion == "" || semver_packageVersion.GreaterThan(semver_latestVersion) {
-							matchingPackagesLatestVersion[_package.Name]["Version"] = _package.Version
-							matchingPackagesLatestVersion[_package.Name]["BuildTime"] = _package.BuildTime
-							matchingPackagesLatestVersion[_package.Name]["Repository"] = APKINDEXFriendlyName
-							matchingPackagesLatestVersion[_package.Name]["Origin"] = _package.Origin
-						}
-					} else {
-						if *showSubPackageInformation && !*matchAsRegex {
-							//is there an origin of this package and if so does it match the package name filter
-							if _package.Origin != "" && _package.Origin == packageName {
-								subPackageNames = append(subPackageNames, _package.Name)
+						if matchFound {
+							pkgVersion := Version{
+								BuildTime:  _package.BuildTime,
+								Origin:     _package.Origin,
+								Repository: _friendlyName,
+								Version:    _package.Version,
 							}
-						}
-					}
-				}
-			} else {
-				// we are not matching any packages here so print all found package names and versions
-				_parentPackageInformation := ""
-				if *showParentPackageInformation {
-					_parentPackageInformation = " - Parent/Origin package: " + _package.Origin
-				}
-				fmt.Printf("%s version %s (%s - %s) in %s repository%s\n", _package.Name, _package.Version, humanize.Time(_package.BuildTime), _package.BuildTime, APKINDEXFriendlyName, _parentPackageInformation)
-			}
-		}
 
-		if localAPKINDEXPath != APKINDEXurl {
-			// delete the temporary directory
-			err = os.RemoveAll(temporaryAPKINDEXdir)
-			if err != nil {
-				fmt.Printf("Unable to delete temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
-				os.Exit(1)
+							// Create a PackageInfo structure for each package
+							pkgInfo := PackageInfo{
+								Versions:    []Version{},
+								SubPackages: []string{},
+							}
+							// Append the version to the Versions slice
+							pkgInfo.Versions = append(pkgInfo.Versions, pkgVersion)
+
+							if _, exists := localResults[_package.Name]; exists {
+								pkgInfoTemp := localResults[_package.Name]
+								pkgInfoTemp.Versions = append(pkgInfoTemp.Versions, pkgVersion)
+								localResults[_package.Name] = pkgInfoTemp
+							} else {
+								// Add the PackageInfo to the Result map
+								localResults[_package.Name] = pkgInfo
+							}
+
+						}
+						//Gather all subpackage names
+						if _package.Origin != "" && _package.Origin != _package.Name {
+							localSubPackages[_package.Origin] = append(localSubPackages[_package.Origin], _package.Name)
+						}
+
+					}
+				} else {
+					// we are not matching any packages here so print all found package names and versions
+					_parentPackageInformation := ""
+					if *showParentPackageInformation {
+						_parentPackageInformation = " - Parent/Origin package: " + _package.Origin
+					}
+					fmt.Printf("%s version %s (%s - %s) in %s repository%s\n", _package.Name, _package.Version, humanize.Time(_package.BuildTime), _package.BuildTime, APKINDEXFriendlyName, _parentPackageInformation)
+				}
+			}
+			if localAPKINDEXPath != _apkIndexURL {
+				// delete the temporary directory
+				err = os.RemoveAll(temporaryAPKINDEXdir)
+				if err != nil {
+					fmt.Printf("Unable to delete temporary directory %s: %v\n", temporaryAPKINDEXdir, err)
+					os.Exit(1)
+				}
+			}
+
+			resultsChan <- localResults
+			subPackagesChan <- localSubPackages
+		}(APKINDEXFriendlyName, APKINDEXurl)
+
+	}
+
+	// Close the results and errors channels once all goroutines are done
+	wg.Wait()
+	close(resultsChan)
+	close(subPackagesChan)
+	close(errorsChan)
+
+	// Wait for all receiver goroutines to complete
+	receiverWg.Wait()
+
+	// now sort the versions within the per package info
+	for _packageName, _pkgInfo := range results {
+		if len(_pkgInfo.Versions) > 1 {
+			_versions := _pkgInfo.Versions
+			sort.Slice(_versions, func(i, j int) bool {
+				v1, _ := version.NewVersion(_versions[i].Version)
+				v2, _ := version.NewVersion(_versions[j].Version)
+				return v2.GreaterThan(v1) // Sort in ascending order (earliest first)
+			})
+			_pkgInfo.Versions = _versions
+			packageSubPackagesIncludingDuplicates := subPackages[_packageName]
+			_pkgInfo.SubPackages = removeDuplicates(packageSubPackagesIncludingDuplicates)
+			results[_packageName] = _pkgInfo
+		}
+	}
+
+	if !*listAllVersions {
+		// Loop through all the packages and delete all versions apart from last index
+		for _packageName, _pkgInfo := range results {
+			if len(_pkgInfo.Versions) > 1 {
+				_pkgInfo.Versions = _pkgInfo.Versions[len(_pkgInfo.Versions)-1:]
+				results[_packageName] = _pkgInfo
 			}
 		}
 	}
-	// ensure if subPackageNames is not empty that we remove any duplicates
-	subPackageNames = removeDuplicates(subPackageNames)
 
 	if *outputJSON {
-		if *listAllVersions {
-			// Sort the package names
-			packageNameKeys := make([]string, 0, len(matchingPackagesAllVersions))
-			for k := range matchingPackagesAllVersions {
-				packageNameKeys = append(packageNameKeys, k)
-			}
-			sort.Strings(packageNameKeys)
+		jsonOutputBytes := []byte{}
+		err := error(nil)
 
-			// Create a sorted map
-			sortedMatchingPackagesAllVersions := make(map[string][]map[string]interface{})
-			for _, packageName := range packageNameKeys {
-				versions := matchingPackagesAllVersions[packageName]
-				sort.Slice(versions, func(i, j int) bool {
-					compare_version_i, _ := version.NewVersion(versions[i]["Version"].(string))
-					compare_version_j, _ := version.NewVersion(versions[j]["Version"].(string))
-					return compare_version_j.GreaterThan(compare_version_i)
-				})
-				sortedMatchingPackagesAllVersions[packageName] = versions
-			}
-
-			// Marshal the sorted map to JSON
-			jsonOutput, err := json.MarshalIndent(sortedMatchingPackagesAllVersions, "", "  ")
-			if err != nil {
-				log.Fatalf("Error marshalling JSON: %v", err)
-			}
-			fmt.Println(string(jsonOutput))
-		} else {
-			jsonOutput, err := json.MarshalIndent(matchingPackagesLatestVersion, "", "  ")
-			if err != nil {
-				log.Fatalf("Error marshalling JSON: %v", err)
-			}
-			fmt.Println(string(jsonOutput))
+		jsonOutputBytes, err = json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			log.Fatalf("Error marshalling JSON: %v", err)
 		}
+		fmt.Println(string(jsonOutputBytes))
 	} else {
-		if *listAllVersions {
-			packageNameKeys := make([]string, 0, len(matchingPackagesAllVersions))
-			for k := range matchingPackagesAllVersions {
-				packageNameKeys = append(packageNameKeys, k)
-			}
-			sort.Strings(packageNameKeys)
-			for _, matchingPackageAllVersionsPackageName := range packageNameKeys {
-				matchingPackageMap := matchingPackagesAllVersions[matchingPackageAllVersionsPackageName]
-				fmt.Printf("The versions of package %s are:\n", matchingPackageAllVersionsPackageName)
-				sort.Slice(matchingPackageMap, func(i, j int) bool {
-					compare_version_i, _ := version.NewVersion(matchingPackageMap[i]["Version"].(string))
-					compare_version_j, _ := version.NewVersion(matchingPackageMap[j]["Version"].(string))
-					return compare_version_j.GreaterThan(compare_version_i)
-				})
-				for _, versionMap := range matchingPackageMap {
-					_parentPackageInformation := ""
-					if *showParentPackageInformation {
-						_parentPackageInformation = " - Parent/Origin package: " + versionMap["Origin"].(string)
-					}
-					fmt.Printf("%s (%s - %s) in %s repository%s\n", versionMap["Version"].(string), humanize.Time(versionMap["BuildTime"].(time.Time)), versionMap["BuildTime"].(time.Time), versionMap["Repository"].(string), _parentPackageInformation)
-				}
-			}
-		} else {
-			packageNameKeys := make([]string, 0, len(matchingPackagesLatestVersion))
-			for k := range matchingPackagesLatestVersion {
-				packageNameKeys = append(packageNameKeys, k)
-			}
-			sort.Strings(packageNameKeys)
-			for _, matchingPackageLatestVersionPackageName := range packageNameKeys {
-				matchingPackageMap := matchingPackagesLatestVersion[matchingPackageLatestVersionPackageName]
-				_parentPackageInformation := ""
-				if *showParentPackageInformation {
-					_parentPackageInformation = " - Parent/Origin package: " + matchingPackageMap["Origin"].(string)
-				}
-				fmt.Printf("The latest version of package %s is %s (%s - %s) in %s repository%s\n", matchingPackageLatestVersionPackageName, matchingPackageMap["Version"].(string), humanize.Time(matchingPackageMap["BuildTime"].(time.Time)), matchingPackageMap["BuildTime"].(time.Time), matchingPackageMap["Repository"].(string), _parentPackageInformation)
-			}
+		// sort the results by package name
+		_packageNameKeys := make([]string, 0, len(results))
+		for key := range results {
+			_packageNameKeys = append(_packageNameKeys, key)
 		}
-		if *showSubPackageInformation && !*matchAsRegex && len(subPackageNames) > 0 {
-			fmt.Println("Sub packages:")
-			for _, subPackageName := range subPackageNames {
-				fmt.Println(subPackageName)
+		sort.Strings(_packageNameKeys) // Sort the keys alphabetically
+
+		for _, key := range _packageNameKeys {
+			_packageName := key
+			_pkgInfo := results[key]
+			fmt.Printf("The versions of package %s are:\n", _packageName)
+			_parentPackageInformation := ""
+
+			for _, _version := range _pkgInfo.Versions {
+				if *showParentPackageInformation {
+					_parentPackageInformation = " - Parent/Origin package: " + _version.Origin
+				}
+				fmt.Printf("\t%s (%s - %s) in %s repository%s\n", _version.Version, humanize.Time(_version.BuildTime), _version.BuildTime, _version.Repository, _parentPackageInformation)
+			}
+			if *showSubPackageInformation && !*matchAsRegex && len(_pkgInfo.SubPackages) > 0 {
+				fmt.Println("Sub packages:")
+				for _, subPackageName := range _pkgInfo.SubPackages {
+					fmt.Printf("\t\t%s\n", subPackageName)
+				}
 			}
 		}
 	}
