@@ -388,7 +388,7 @@ func main() {
 				fmt.Printf("\t%s (%s - %s) in %s repository%s\n", _version.Version, humanize.Time(_version.BuildTime), _version.BuildTime, _version.Repository, _parentPackageInformation)
 			}
 			if *showSubPackageInformation && !*matchAsRegex && len(_pkgInfo.SubPackages) > 0 {
-				fmt.Println("Sub packages:")
+				fmt.Printf("\tSub packages:\n")
 				for _, subPackageName := range _pkgInfo.SubPackages {
 					fmt.Printf("\t\t%s\n", subPackageName)
 				}
