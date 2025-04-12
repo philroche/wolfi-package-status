@@ -8,8 +8,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,8 +113,13 @@ func main() {
 
 	httpBasicAuthPassword = getEnvOrFlag("HTTP_AUTH", localAuthToken)
 	if httpBasicAuthPassword == "" {
-		fmt.Print("Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
-		_, _ = fmt.Scanln(&httpBasicAuthPassword)
+		fmt.Fprintf(os.Stderr, "Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
+		r, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			fmt.Fprintf(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		httpBasicAuthPassword = strings.Trim(r, "\r\n")
 	}
 
 	queryStrings := []string{}
