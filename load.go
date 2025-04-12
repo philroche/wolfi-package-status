@@ -14,22 +14,17 @@ import (
 
 type Scheme string
 
-// type APKIndex string
-
-// NOTES
-// You dont need to use osstat to check if an object is a file
-// You dont need to create a file, you only need a readcloser, what if you dont have permission to get the file
 var (
 	client = &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 2 * time.Minute,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
 				Timeout:   5 * time.Second,
-				KeepAlive: 30 * time.Second,
+				KeepAlive: 5 * time.Minute,
 			}).DialContext,
 			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
+			MaxIdleConns:          10,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
@@ -41,10 +36,6 @@ var (
 	HTTPS Scheme = "https"
 	HTTP  Scheme = "https"
 	FILE  Scheme = "file"
-
-	// WOLFI               APKIndex = "wolfi"
-	// ENTERPRISE_PACKAGES APKIndex = "enterprise packages"
-	// EXTRA_PACKAGES      APKIndex = "extra packages"
 )
 
 func parseScheme(ref string) (Scheme, error) {
