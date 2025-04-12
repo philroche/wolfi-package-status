@@ -1,38 +1,26 @@
 package main
 
-import "regexp"
-
-type query struct {
-	s string
-	r *regexp.Regexp
+type Matcher interface {
+	MatchString(s string) bool
 }
 
-func (q *query) match(ref string) bool {
-	if q.r != nil {
-		return q.r.Match([]byte(ref))
-	}
+type queryString struct {
+	s string
+}
+
+func (q *queryString) MatchString(ref string) bool {
 	return q.s == ref
 }
 
-func NewQueryString(ref string) *query {
-	return &query{
+func NewQueryString(ref string) Matcher {
+	return &queryString{
 		s: ref,
 	}
 }
 
-func NewQueryRegexp(ref string) (*query, error) {
-	regex, err := regexp.Compile(ref)
-	if err != nil {
-		return nil, err
-	}
-	return &query{
-		r: regex,
-	}, nil
-}
-
-func matchQueries(queries []*query, ref string) bool {
+func matchReference(queries []Matcher, ref string) bool {
 	for _, q := range queries {
-		if q.match(ref) {
+		if q.MatchString(ref) {
 			return true
 		}
 	}

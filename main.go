@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -62,14 +63,14 @@ func main() {
 		httpBasicAuthPassword = strings.Trim(r, "\r\n")
 	}
 
-	var queries []*query
+	var queries []Matcher
 	var err error
 	args := flag.Args()
 	if len(args) > 0 {
 		for _, arg := range args {
-			var q *query
+			var q Matcher
 			if matchAsRegex {
-				q, err = NewQueryRegexp(arg)
+				q, err = regexp.Compile(arg)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "failed to parse regexp from input query %s: %w", arg, err)
 					os.Exit(1)

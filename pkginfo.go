@@ -56,14 +56,14 @@ type PackageInfoOutput struct {
 	Result map[string]PackageData `json:",inline"`
 }
 
-func (p *PackageInfoOutput) AddPackageMeta(q []*query, pkgmeta *repository.Package, repo string) {
+func (p *PackageInfoOutput) AddPackageMeta(q []Matcher, pkgmeta *repository.Package, repo string) {
 	isMatched := false
 	isSubPkg := false
 	// if the package matches the queries then it directly gets added as a package
 	// if the package doesn't match any query but is a subpackage of a matched package, then,
 	// it only gets added as a subpackage
-	if matchQueries(q, pkgmeta.Name) {
-		if len(pkgmeta.Origin) != 0 && matchQueries(q, pkgmeta.Origin) {
+	if matchReference(q, pkgmeta.Name) {
+		if len(pkgmeta.Origin) != 0 && matchReference(q, pkgmeta.Origin) {
 			isSubPkg = true
 			isMatched = false
 		} else {
