@@ -12,9 +12,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/dustin/go-humanize"
-	"github.com/knqyf263/go-apk-version"
-	"gitlab.alpinelinux.org/alpine/go/repository"
 	"io"
 	"log"
 	"net/http"
@@ -24,6 +21,10 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/dustin/go-humanize"
+	version "github.com/knqyf263/go-apk-version"
+	"gitlab.alpinelinux.org/alpine/go/repository"
 )
 
 func isValidRegex(pattern string) bool {
@@ -39,11 +40,11 @@ func matchRegex(s string, pattern string) bool {
 	return regex.MatchString(s)
 }
 
-func getEnvOrFlag(envName string, flagValue *string) string {
+func getEnvOrFlag(envName string, flagValue string) string {
 	if value, exists := os.LookupEnv(envName); exists {
 		return value
 	}
-	return *flagValue
+	return flagValue
 }
 
 func removeDuplicates(stringsList []string) []string {
@@ -79,32 +80,38 @@ type Result map[string]PackageInfo
 type SubPackages map[string][]string
 
 func main() {
-	matchAsRegex := flag.Bool("regex", false, "Parse package names as regex")
-	listAllVersions := flag.Bool("all-versions", false, "List all matching package versions - not only the latest")
-	localAPKINDEX := flag.String("local-apkindex", "", "Path to a local APKINDEX file")
-	localAuthToken := flag.String("auth-token", "", "Specify auth token to use when querying non public wolfi package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
-	showParentPackageInformation := flag.Bool("show-parent-package", false, "This might be a sub package of a parent package, show the parent package information")
-	showSubPackageInformation := flag.Bool("show-sub-packages", false, "Show the sub package information. This will only take effect when a non regex package name filter is used.")
-	helpText := flag.Bool("help", false, "Display usage information")
-	outputJSON := flag.Bool("json", false, "Render output in JSON format")
+	var (
+		matchAsRegex          bool
+		listAllVersions       bool
+		showParentPkgInfo     bool
+		showSubPkgInfo        bool
+		helpTxt               bool
+		outputJSON            bool
+		localAPKIndex         string
+		localAuthToken        string
+		httpBasicAuthPassword string
+	)
+
+	flag.BoolVar(&matchAsRegex, "regex", false, "Parse package names as regex")
+	flag.BoolVar(&listAllVersions, "all-versions", false, "List all matching package versions - not only the latest")
+	flag.StringVar(&localAPKIndex, "local-apkindex", "", "Path to a local APKINDEX file")
+	flag.StringVar(&localAuthToken, "auth-token", "", "Specify auth token to use when querying non public wolfi package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
+	flag.BoolVar(&showParentPkgInfo, "show-parent-package", false, "This might be a sub package of a parent package, show the parent package information")
+	flag.BoolVar(&showSubPkgInfo, "show-sub-packages", false, "Show the sub package information. This will only take effect when a non regex package name filter is used.")
+	flag.BoolVar(&helpTxt, "help", false, "Display usage information")
+	flag.BoolVar(&outputJSON, "json", false, "Render output in JSON format")
 	flag.Parse()
-	httpBasicAuthPassword := getEnvOrFlag("HTTP_AUTH", localAuthToken)
+
+	if len(os.Args) < 2 || helpTxt {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s: [options] [package names]\n", os.Args[0])
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	httpBasicAuthPassword = getEnvOrFlag("HTTP_AUTH", localAuthToken)
 	if httpBasicAuthPassword == "" {
 		fmt.Print("Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
 		_, _ = fmt.Scanln(&httpBasicAuthPassword)
-	}
-	if *helpText {
-		fmt.Printf("Usage: %s [options] [package names]\n", os.Args[0])
-		fmt.Println("\t* Multiple package names can be specified separated by space")
-		fmt.Println("\t* Option `--regex` can be used to match package names on specified regular expression. Multiple regular expressions can be specified separated by space")
-		fmt.Println("\t* Option `--all-versions` can be used to list all package versions, not only the latest.")
-		fmt.Println("\t* Option `--auth-token` specify auth token to use when querying wolfi non public package repositories - enterprise-packages and extra-packages - use $(chainctl auth token --audience apk.cgr.dev). You can also set environment variable HTTP_AUTH.")
-		fmt.Println("\t* Option `--show-parent-package` can be used to show the parent package information as the package being queried might be defined as a sub package.")
-		fmt.Println("\t* Option `--show-sub-packages` can be used to show the sub package information as the package being queried might be defined as a parent/origin package. This will only take effect when a non regex package name filter is used.")
-		fmt.Println("\t* Option `--local-apkindex` can be used to specify a local APKINDEX.tar.gz file to use instead of querying remote repositories.")
-		fmt.Println("\t* Option `--json` can be used to render output in JSON format.")
-		fmt.Println("\t* Option `--help` can be used to display this usage message")
-		os.Exit(0)
 	}
 
 	queryStrings := []string{}
@@ -117,8 +124,8 @@ func main() {
 
 	var APKINDEXURLs = make(map[string]string)
 
-	if *localAPKINDEX != "" {
-		APKINDEXURLs["local apkindex"] = *localAPKINDEX
+	if len(localAPKIndex) != 0 {
+		APKINDEXURLs["local apkindex"] = localAPKIndex
 	} else {
 		APKINDEXURLs["wolfi os"] = "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz"
 		APKINDEXURLs["enterprise packages"] = "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz"
@@ -263,7 +270,7 @@ func main() {
 						if queryString == _package.Name {
 							matchFound = true
 						}
-						if *matchAsRegex && isValidRegex(queryString) && matchRegex(_package.Name, queryString) {
+						if matchAsRegex && isValidRegex(queryString) && matchRegex(_package.Name, queryString) {
 							matchFound = true
 						}
 
@@ -302,7 +309,7 @@ func main() {
 				} else {
 					// we are not matching any packages here so print all found package names and versions
 					_parentPackageInformation := ""
-					if *showParentPackageInformation {
+					if showParentPkgInfo {
 						_parentPackageInformation = " - Parent/Origin package: " + _package.Origin
 					}
 					fmt.Printf("%s version %s (%s - %s) in %s repository%s\n", _package.Name, _package.Version, humanize.Time(_package.BuildTime), _package.BuildTime, APKINDEXFriendlyName, _parentPackageInformation)
@@ -348,7 +355,7 @@ func main() {
 		}
 	}
 
-	if !*listAllVersions {
+	if !listAllVersions {
 		// Loop through all the packages and delete all versions apart from last index
 		for _packageName, _pkgInfo := range results {
 			if len(_pkgInfo.Versions) > 1 {
@@ -358,7 +365,7 @@ func main() {
 		}
 	}
 
-	if *outputJSON {
+	if outputJSON {
 		jsonOutputBytes := []byte{}
 		err := error(nil)
 
@@ -382,12 +389,12 @@ func main() {
 			_parentPackageInformation := ""
 
 			for _, _version := range _pkgInfo.Versions {
-				if *showParentPackageInformation {
+				if showParentPkgInfo {
 					_parentPackageInformation = " - Parent/Origin package: " + _version.Origin
 				}
 				fmt.Printf("\t%s (%s - %s) in %s repository%s\n", _version.Version, humanize.Time(_version.BuildTime), _version.BuildTime, _version.Repository, _parentPackageInformation)
 			}
-			if *showSubPackageInformation && !*matchAsRegex && len(_pkgInfo.SubPackages) > 0 {
+			if showSubPkgInfo && !matchAsRegex && len(_pkgInfo.SubPackages) > 0 {
 				fmt.Printf("\tSub packages:\n")
 				for _, subPackageName := range _pkgInfo.SubPackages {
 					fmt.Printf("\t\t%s\n", subPackageName)
