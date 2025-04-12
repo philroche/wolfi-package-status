@@ -15,6 +15,21 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+type APKIndex string
+
+var (
+	WOLFI               APKIndex = "wolfi os"
+	ENTERPRISE_PACKAGES APKIndex = "enterprise packages"
+	EXTRA_PACKAGES      APKIndex = "extra packages"
+	LOCAL               APKIndex = "local"
+
+	DefaultAPKIndices = map[APKIndex]string{
+		WOLFI:               "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
+		ENTERPRISE_PACKAGES: "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz",
+		EXTRA_PACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
+	}
+)
+
 // PackageMeta represents a single package version entry in the JSON
 type PackageMeta struct {
 	BuildTime  time.Time `json:"BuildTime"`
@@ -138,11 +153,33 @@ func (p *PackageInfoOutput) Sort() {
 }
 
 func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSubPkgInfo bool) {
+	results := p.Result
+	if !listAll {
+		// Loop through all the packages and delete all versions apart from last index
+		for name, pkgInfo := range results {
+			if len(pkgInfo.Versions) > 1 {
+				pkgInfo.Versions = pkgInfo.Versions[len(pkgInfo.Versions)-1:]
+				results[name] = pkgInfo
+			}
+			if len(pkgInfo.SubPackages) > 0 && len(pkgInfo.Versions) == 1 {
+				repo := pkgInfo.Versions[0].Repository
+				ver := pkgInfo.Versions[0].Version
+				var subpkg []SubPackageMeta
+				for _, s := range pkgInfo.SubPackages {
+					if s.Version == ver && s.Repository == repo {
+						subpkg = append(subpkg, s)
+					}
+				}
+				pkgInfo.SubPackages = subpkg
+			}
+		}
+	}
+
 	if printJSON {
 		jsonOutputBytes := []byte{}
 		var err error
 
-		jsonOutputBytes, err = json.MarshalIndent(p.Result, "", "  ")
+		jsonOutputBytes, err = json.MarshalIndent(results, "", "  ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error marshalling JSON: %v", err)
 			os.Exit(1)
@@ -152,7 +189,6 @@ func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSub
 		// sort the results by package name
 		mapKeys := maps.Keys(p.Result)
 		sort.Strings(mapKeys) // Sort the keys alphabetically
-		results := p.Result
 
 		for _, key := range mapKeys {
 			pkgInfo := results[key]
