@@ -39,4 +39,3 @@ var (
 		EXTRA_PACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
 	}
 )
-
