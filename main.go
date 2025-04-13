@@ -54,10 +54,10 @@ func main() {
 
 	httpBasicAuthPassword = getEnvWithFallback("HTTP_AUTH", localAuthToken)
 	if httpBasicAuthPassword == "" {
-		fmt.Fprintf(os.Stderr, "Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
-		r, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		fmt.Fprintf(ErrorStream, "Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
+		r, err := bufio.NewReader(InputStream).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintf(os.Stderr, err.Error())
+			fmt.Fprintf(ErrorStream, err.Error())
 			os.Exit(1)
 		}
 		httpBasicAuthPassword = strings.Trim(r, "\r\n")
@@ -72,7 +72,7 @@ func main() {
 			if matchAsRegex {
 				q, err = regexp.Compile(arg)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "failed to parse regexp from input query %s: %w", arg, err)
+					fmt.Fprintf(ErrorStream, "failed to parse regexp from input query %s: %v", arg, err)
 					os.Exit(1)
 				}
 			} else {
@@ -124,7 +124,7 @@ func main() {
 		})
 	}
 	if err := g.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to fetch package info from index: %w", err)
+		fmt.Fprintf(ErrorStream, "failed to fetch package info from index: %v", err)
 	}
 
 	result.Sort()

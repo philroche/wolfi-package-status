@@ -4,35 +4,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
-	"time"
 )
 
 type Scheme string
 
 var (
-	client = &http.Client{
-		Timeout: 2 * time.Minute,
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   5 * time.Second,
-				KeepAlive: 5 * time.Minute,
-			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          10,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}
-	// TODO: is there a way to get current wolfi-package-status version?
-	UserAgent = fmt.Sprintf("wolfi-package-status/(%s; %s)", runtime.GOOS, runtime.GOARCH)
-
 	HTTPS Scheme = "https"
 	HTTP  Scheme = "https"
 	FILE  Scheme = "file"
@@ -77,7 +56,7 @@ func fetchAPKIndex(ref, httpBasicAuthPassword string) (io.ReadCloser, error) {
 		req.Header.Add("User-Agent", UserAgent) // TODO: does this only work with curl??
 
 		// Send the request via a client
-		resp, err := client.Do(req)
+		resp, err := DefaultHTTPClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to download APKINDEX file %s: %w\n", ref, err)
 		}

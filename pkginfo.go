@@ -22,12 +22,6 @@ var (
 	ENTERPRISE_PACKAGES APKIndex = "enterprise packages"
 	EXTRA_PACKAGES      APKIndex = "extra packages"
 	LOCAL               APKIndex = "local"
-
-	DefaultAPKIndices = map[APKIndex]string{
-		WOLFI:               "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
-		ENTERPRISE_PACKAGES: "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz",
-		EXTRA_PACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
-	}
 )
 
 // PackageMeta represents a single package version entry in the JSON
@@ -181,7 +175,7 @@ func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSub
 
 		jsonOutputBytes, err = json.MarshalIndent(results, "", "  ")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshalling JSON: %v", err)
+			fmt.Fprintf(ErrorStream, "Error marshalling JSON: %v", err)
 			os.Exit(1)
 		}
 		fmt.Println(string(jsonOutputBytes))
@@ -192,19 +186,19 @@ func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSub
 
 		for _, key := range mapKeys {
 			pkgInfo := results[key]
-			fmt.Fprintf(os.Stdout, "The versions of package %s are:\n", key)
+			fmt.Fprintf(WriteStream, "The versions of package %s are:\n", key)
 
 			for _, v := range pkgInfo.Versions {
 				parentPkgInfo := ""
 				if showParentPkgInfo {
 					parentPkgInfo = " - Parent/Origin package: " + v.Origin
 				}
-				fmt.Fprintf(os.Stdout, "\t%s (%s - %s) in %s repository%s\n", v.Version, humanize.Time(v.BuildTime), v.BuildTime, v.Repository, parentPkgInfo)
+				fmt.Fprintf(WriteStream, "\t%s (%s - %s) in %s repository%s\n", v.Version, humanize.Time(v.BuildTime), v.BuildTime, v.Repository, parentPkgInfo)
 			}
 			if showSubPkgInfo && len(pkgInfo.SubPackages) > 0 {
 				fmt.Printf("\tSub packages:\n")
 				for _, s := range pkgInfo.SubPackages {
-					fmt.Fprintf(os.Stdout, "\t%s %s (%s - %s) in %s repository\n", s.Name, s.Version, humanize.Time(s.BuildTime), s.BuildTime, s.Repository)
+					fmt.Fprintf(WriteStream, "\t%s %s (%s - %s) in %s repository\n", s.Name, s.Version, humanize.Time(s.BuildTime), s.BuildTime, s.Repository)
 				}
 			}
 		}
