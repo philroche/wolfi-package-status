@@ -8,7 +8,7 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-func getEnvWithFallback(envName string, fallback string) string {
+func getEnvWithFallback(envName, fallback string) string {
 	if value, exists := os.LookupEnv(envName); exists {
 		return value
 	}

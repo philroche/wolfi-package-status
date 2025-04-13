@@ -16,7 +16,7 @@ import (
 
 type APKIndex string
 
-var (
+const (
 	WOLFI               APKIndex = "wolfi os"
 	ENTERPRISE_PACKAGES APKIndex = "enterprise packages"
 	EXTRA_PACKAGES      APKIndex = "extra packages"
@@ -52,7 +52,7 @@ func (p *PackageInfoOutput) AddPackageMeta(q []Matcher, pkgmeta *repository.Pack
 	if matchReference(q, pkgmeta.Name) {
 		isMatched = true
 	} else {
-		if len(pkgmeta.Origin) != 0 && matchReference(q, pkgmeta.Origin) {
+		if pkgmeta.Origin != "" && matchReference(q, pkgmeta.Origin) {
 			isSubPkg = true
 			isMatched = false
 		} else {
@@ -107,12 +107,17 @@ func (p *PackageInfoOutput) Sort() {
 		if len(pkgData.Versions) > 1 {
 			versions := pkgData.Versions
 			sort.Slice(versions, func(i, j int) bool {
-				v1, _ := version.NewVersion(versions[i].Version)
-				v2, _ := version.NewVersion(versions[j].Version)
+				v1, err := version.NewVersion(versions[i].Version)
+				if err != nil {
+					fmt.Fprintf(ErrorStream, "failed to parse version: %v error %v", v1, err)
+				}
+				v2, err := version.NewVersion(versions[j].Version)
+				if err != nil {
+					fmt.Fprintf(ErrorStream, "failed to parse version: %v error %v", v2, err)
+				}
 				return v2.GreaterThan(v1) // Sort in ascending order (earliest first)
 			})
 			pkgData.Versions = versions
-
 		}
 		if len(pkgData.SubPackages) > 0 {
 			subPkgList := dedup(pkgData.SubPackages)

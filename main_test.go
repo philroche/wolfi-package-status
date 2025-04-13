@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func testSetup() (cleanup func(), reset func()) {
+func testSetup() (cleanup, reset func()) {
 	wStream := WriteStream
 	eStream := ErrorStream
 	defaultIndices := DefaultAPKIndices
