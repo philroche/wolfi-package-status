@@ -29,9 +29,9 @@ var (
 	// TODO: is there a way to get current wolfi-package-status version?
 	UserAgent = fmt.Sprintf("wolfi-package-status/(%s; %s)", runtime.GOOS, runtime.GOARCH)
 
-	WriteStream io.Writer = os.Stdout
-	ErrorStream io.Writer = os.Stderr
-	InputStream io.Reader = os.Stdin
+	WriteStream io.ReadWriter = os.Stdout
+	ErrorStream io.ReadWriter = os.Stderr
+	InputStream io.ReadWriter = os.Stdin
 
 	DefaultAPKIndices = map[APKIndex]string{
 		WOLFI:               "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
@@ -39,3 +39,4 @@ var (
 		EXTRA_PACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
 	}
 )
+

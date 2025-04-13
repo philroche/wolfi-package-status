@@ -35,7 +35,7 @@ func parseScheme(ref string) (Scheme, error) {
 	}
 }
 
-func fetchAPKIndex(ref, httpBasicAuthPassword string) (io.ReadCloser, error) {
+func fetchAPKIndex(index APKIndex, ref, httpBasicAuthPassword string) (io.ReadCloser, error) {
 	scheme, err := parseScheme(ref)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch APKIndex data: %w", err)
@@ -44,21 +44,21 @@ func fetchAPKIndex(ref, httpBasicAuthPassword string) (io.ReadCloser, error) {
 	case HTTPS:
 		req, err := http.NewRequest("GET", ref, nil)
 		if err != nil {
-			return nil, fmt.Errorf("Error creating request: %w", err)
+			return nil, fmt.Errorf("error creating request: %w", err)
 		}
 
 		// Add the auth token to the request header but only for non public repositories
-		if httpBasicAuthPassword != "" { // TODO: why not just pass it for public repo as well
+		if httpBasicAuthPassword != "" && index != WOLFI {
 			encodedAuth := base64.StdEncoding.EncodeToString([]byte("user:" + httpBasicAuthPassword))
 			req.Header.Set("Authorization", "Basic "+encodedAuth)
 		}
 		req.Header.Set("Accept", "application/gzip")
-		req.Header.Add("User-Agent", UserAgent) // TODO: does this only work with curl??
+		req.Header.Add("User-Agent", UserAgent)
 
 		// Send the request via a client
 		resp, err := DefaultHTTPClient.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to download APKINDEX file %s: %w\n", ref, err)
+			return nil, fmt.Errorf("failed to download APKINDEX file %s: %w", ref, err)
 		}
 
 		return resp.Body, nil

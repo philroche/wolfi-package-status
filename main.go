@@ -57,15 +57,36 @@ func main() {
 		fmt.Fprintf(ErrorStream, "Specifying an auth token is required. Use `chainctl auth token --audience apk.cgr.dev` to get the required token. Please enter token now - alternatively, you can also specify this via --auth-token flag or by setting HTTP_AUTH environment variable: ")
 		r, err := bufio.NewReader(InputStream).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintf(ErrorStream, err.Error())
+			fmt.Fprint(ErrorStream, err.Error())
 			os.Exit(1)
 		}
 		httpBasicAuthPassword = strings.Trim(r, "\r\n")
 	}
 
+	execute(
+		flag.Args(),
+		matchAsRegex,
+		listAllVersions,
+		showParentPkgInfo,
+		showSubPkgInfo,
+		outputJSON,
+		localAPKIndex,
+		httpBasicAuthPassword,
+	)
+}
+
+func execute(
+	args []string,
+	matchAsRegex bool,
+	listAllVersions bool,
+	showParentPkgInfo bool,
+	showSubPkgInfo bool,
+	outputJSON bool,
+	localAPKIndex string,
+	httpBasicAuthPassword string,
+) {
 	var queries []Matcher
 	var err error
-	args := flag.Args()
 	if len(args) > 0 {
 		for _, arg := range args {
 			var q Matcher
@@ -92,13 +113,15 @@ func main() {
 		APKIndexURLs = DefaultAPKIndices
 	}
 
-	result := &PackageInfoOutput{}
+	result := &PackageInfoOutput{
+		Result: make(map[string]PackageData),
+	}
 	var g errgroup.Group
 	g.SetLimit(runtime.NumCPU())
 	for indexName, url := range APKIndexURLs {
 		indexName, url := indexName, url
 		g.Go(func() error {
-			reader, err := fetchAPKIndex(url, httpBasicAuthPassword)
+			reader, err := fetchAPKIndex(indexName, url, httpBasicAuthPassword)
 			if err != nil {
 				return err
 			}
@@ -128,5 +151,5 @@ func main() {
 	}
 
 	result.Sort()
-	result.Print(listAllVersions, outputJSON, showParentPkgInfo, showSubPkgInfo)
+	result.Print(listAllVersions, outputJSON, showParentPkgInfo, showSubPkgInfo, matchAsRegex)
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,16 +31,10 @@ type PackageMeta struct {
 	Version    string    `json:"Version"`
 }
 
-// SubPackageMeta represents a single subpackage version entry in the JSON
-type SubPackageMeta struct {
-	PackageMeta `json:",inline"`
-	Name        string `json:"name"`
-}
-
 // PackageData represents the overall structure for a package
 type PackageData struct {
-	Versions    []PackageMeta    `json:"versions"`
-	SubPackages []SubPackageMeta `json:"subpackages"`
+	Versions    []PackageMeta `json:"versions"`
+	SubPackages []string      `json:"subpackages"`
 }
 
 // Output represents the top-level structure for handling multiple packages
@@ -57,14 +50,14 @@ func (p *PackageInfoOutput) AddPackageMeta(q []Matcher, pkgmeta *repository.Pack
 	// if the package doesn't match any query but is a subpackage of a matched package, then,
 	// it only gets added as a subpackage
 	if matchReference(q, pkgmeta.Name) {
+		isMatched = true
+	} else {
 		if len(pkgmeta.Origin) != 0 && matchReference(q, pkgmeta.Origin) {
 			isSubPkg = true
 			isMatched = false
 		} else {
 			return
 		}
-	} else {
-		isMatched = true
 	}
 
 	pkgVersion := PackageMeta{
@@ -84,18 +77,14 @@ func (p *PackageInfoOutput) AddPackageMeta(q []Matcher, pkgmeta *repository.Pack
 		} else {
 			pkgInfo := PackageData{
 				Versions:    []PackageMeta{pkgVersion},
-				SubPackages: []SubPackageMeta{},
+				SubPackages: []string{},
 			}
 			p.Result[pkgmeta.Name] = pkgInfo
 		}
 	}
 
 	if isSubPkg {
-		subPkgInfo := SubPackageMeta{
-			PackageMeta: pkgVersion,
-			Name:        pkgmeta.Name,
-		}
-
+		subPkgInfo := pkgmeta.Name
 		if _, exists := p.Result[pkgmeta.Origin]; exists {
 			pkgInfoTemp := p.Result[pkgmeta.Origin]
 			pkgInfoTemp.SubPackages = append(pkgInfoTemp.SubPackages, subPkgInfo)
@@ -103,19 +92,18 @@ func (p *PackageInfoOutput) AddPackageMeta(q []Matcher, pkgmeta *repository.Pack
 		} else {
 			pkgInfo := PackageData{
 				Versions:    []PackageMeta{},
-				SubPackages: []SubPackageMeta{subPkgInfo},
+				SubPackages: []string{subPkgInfo},
 			}
 			p.Result[pkgmeta.Origin] = pkgInfo
 		}
 	}
-
-	return
 }
 
 // Sort sorts all the versions of a packages in ascending order
 func (p *PackageInfoOutput) Sort() {
 	pkgInfo := p.Result
-	for _, pkgData := range pkgInfo {
+	for key, pkgData := range pkgInfo {
+		pkgData := pkgData
 		if len(pkgData.Versions) > 1 {
 			versions := pkgData.Versions
 			sort.Slice(versions, func(i, j int) bool {
@@ -126,27 +114,16 @@ func (p *PackageInfoOutput) Sort() {
 			pkgData.Versions = versions
 
 		}
-		if len(pkgData.SubPackages) > 1 {
-			subpkg := pkgData.SubPackages
-			sort.Slice(subpkg, func(i, j int) bool {
-				name1 := subpkg[i].Name
-				name2 := subpkg[j].Name
-				n := strings.Compare(name1, name2)
-				if n != 0 {
-					return n == -1
-				}
-
-				v1, _ := version.NewVersion(subpkg[i].Version)
-				v2, _ := version.NewVersion(subpkg[j].Version)
-				return v2.GreaterThan(v1) // Sort in ascending order (earliest first)
-			})
-			pkgData.SubPackages = subpkg
+		if len(pkgData.SubPackages) > 0 {
+			subPkgList := dedup(pkgData.SubPackages)
+			pkgData.SubPackages = subPkgList
 		}
+		pkgInfo[key] = pkgData
 	}
 	p.Result = pkgInfo
 }
 
-func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSubPkgInfo bool) {
+func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSubPkgInfo, matchAsRegex bool) {
 	results := p.Result
 	if !listAll {
 		// Loop through all the packages and delete all versions apart from last index
@@ -155,30 +132,16 @@ func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSub
 				pkgInfo.Versions = pkgInfo.Versions[len(pkgInfo.Versions)-1:]
 				results[name] = pkgInfo
 			}
-			if len(pkgInfo.SubPackages) > 0 && len(pkgInfo.Versions) == 1 {
-				repo := pkgInfo.Versions[0].Repository
-				ver := pkgInfo.Versions[0].Version
-				var subpkg []SubPackageMeta
-				for _, s := range pkgInfo.SubPackages {
-					if s.Version == ver && s.Repository == repo {
-						subpkg = append(subpkg, s)
-					}
-				}
-				pkgInfo.SubPackages = subpkg
-			}
 		}
 	}
 
 	if printJSON {
-		jsonOutputBytes := []byte{}
-		var err error
-
-		jsonOutputBytes, err = json.MarshalIndent(results, "", "  ")
+		jsonOutputBytes, err := json.MarshalIndent(results, "", "  ")
 		if err != nil {
 			fmt.Fprintf(ErrorStream, "Error marshalling JSON: %v", err)
 			os.Exit(1)
 		}
-		fmt.Println(string(jsonOutputBytes))
+		fmt.Fprintln(WriteStream, string(jsonOutputBytes))
 	} else {
 		// sort the results by package name
 		mapKeys := maps.Keys(p.Result)
@@ -195,10 +158,10 @@ func (p *PackageInfoOutput) Print(listAll, printJSON, showParentPkgInfo, showSub
 				}
 				fmt.Fprintf(WriteStream, "\t%s (%s - %s) in %s repository%s\n", v.Version, humanize.Time(v.BuildTime), v.BuildTime, v.Repository, parentPkgInfo)
 			}
-			if showSubPkgInfo && len(pkgInfo.SubPackages) > 0 {
-				fmt.Printf("\tSub packages:\n")
+			if showSubPkgInfo && !matchAsRegex && len(pkgInfo.SubPackages) > 0 {
+				fmt.Fprintf(WriteStream, "\tSub packages:\n")
 				for _, s := range pkgInfo.SubPackages {
-					fmt.Fprintf(WriteStream, "\t%s %s (%s - %s) in %s repository\n", s.Name, s.Version, humanize.Time(s.BuildTime), s.BuildTime, s.Repository)
+					fmt.Fprintf(WriteStream, "\t\t%s\n", s)
 				}
 			}
 		}
