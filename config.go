@@ -34,8 +34,8 @@ var (
 	InputStream io.ReadWriter = os.Stdin
 
 	DefaultAPKIndices = map[APKIndex]string{
-		WOLFI:               "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
-		ENTERPRISE_PACKAGES: "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz",
-		EXTRA_PACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
+		WOLFI:              "https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz",
+		ENTERPRISEPACKAGES: "https://apk.cgr.dev/chainguard-private/x86_64/APKINDEX.tar.gz",
+		EXTRAPACKAGES:      "https://apk.cgr.dev/extra-packages/x86_64/APKINDEX.tar.gz",
 	}
 )

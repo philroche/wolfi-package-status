@@ -17,10 +17,10 @@ import (
 type APKIndex string
 
 const (
-	WOLFI               APKIndex = "wolfi os"
-	ENTERPRISE_PACKAGES APKIndex = "enterprise packages"
-	EXTRA_PACKAGES      APKIndex = "extra packages"
-	LOCAL               APKIndex = "local"
+	WOLFI              APKIndex = "wolfi os"
+	ENTERPRISEPACKAGES APKIndex = "enterprise packages"
+	EXTRAPACKAGES      APKIndex = "extra packages"
+	LOCAL              APKIndex = "local"
 )
 
 // PackageMeta represents a single package version entry in the JSON

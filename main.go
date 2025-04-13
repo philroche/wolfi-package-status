@@ -105,7 +105,7 @@ func execute(
 
 	var APKIndexURLs map[APKIndex]string
 
-	if len(localAPKIndex) != 0 {
+	if localAPKIndex != "" {
 		APKIndexURLs = map[APKIndex]string{
 			LOCAL: localAPKIndex,
 		}
