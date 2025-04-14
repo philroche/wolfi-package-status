@@ -140,7 +140,7 @@ func execute(
 					if showParentPkgInfo {
 						parentPkgInfo = " - Parent/Origin package: " + pkg.Origin
 					}
-					fmt.Printf("%s version %s (%s - %s) in %s repository%s\n", pkg.Name, pkg.Version, humanize.Time(pkg.BuildTime), pkg.BuildTime, indexName, parentPkgInfo)
+					fmt.Fprintf(WriteStream, "%s version %s (%s - %s) in %s repository%s\n", pkg.Name, pkg.Version, humanize.Time(pkg.BuildTime), pkg.BuildTime, indexName, parentPkgInfo)
 				}
 			}
 			return nil
